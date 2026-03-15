@@ -1,174 +1,56 @@
-
-Parkinson’s Disease RAG Assistant
+Parkinson's Disease RAG System
 
 Overview
-This project builds a Retrieval-Augmented Generation (RAG) system that answers questions about Parkinson’s disease and atypical parkinsonism using scientific and clinical documents.
+This project demonstrates how to build a retrieval‑augmented generation (RAG) assistant for clinical decision support in Parkinson's disease. It ingests a curated corpus of 17 PDF documents, splits them into overlapping chunks, embeds each chunk using a transformer model, stores the embeddings in a vector database (Chroma), retrieves the most relevant context for a user’s question, and generates a concise answer using a fine‑tuned language model. The system is implemented in a Google Colab notebook and is intended as a learning resource for building RAG pipelines.
 
-Instead of relying only on a language model’s internal knowledge, the system:
-1. Retrieves relevant passages from medical PDFs
-2. Uses those passages as context
-3. Generates grounded answers with citations
+Quick Start
+1. **Mount Google Drive**: In Colab, run `drive.mount('/content/drive')` to access your PDFs stored in Drive.
+2. **Install dependencies**: Use pip to install required packages: `langchain-core`, `langchain-community`, `langchain-text-splitters`, `sentence-transformers`, `chromadb`, `gradio`, `transformers`, and `pypdf`.
+3. **Load PDFs**: Point the loader to your data directory (e.g. `DATA_DIR = '/content/drive/MyDrive/RAG/data'`) and read all 17 PDF files using `PyPDFLoader`.
+4. **Chunk documents**: Split each document into overlapping chunks with `RecursiveCharacterTextSplitter` (e.g. 1,000 characters with 200-character overlap).
+5. **Create embeddings and vector store**: Use `SentenceTransformer('all-MiniLM-L6-v2')` to embed chunks and store them in a persistent Chroma collection.
+6. **Define retrieval function**: Write a function that embeds the user’s query and uses the vector store to return the top‑K most similar chunks along with their metadata.
+7. **Generate answers**: Prompt a generative model such as `flan‑t5‑large` with the retrieved context and your question to produce a bullet‑listed answer.
+   
+Data Ingestion
+All source material lives in the `data` directory of your Google Drive. The documents cover definitions, clinical features, biomarkers, imaging studies, rating scales and differential diagnosis of Parkinson's disease. Use the `PyPDFLoader` from `langchain-community` to load each PDF and convert pages to `Document` objects. When reading PDFs it’s important to mount Google Drive so that the file paths are accessible.
 
-This improves reliability and reduces hallucination compared to standard LLM responses.
-
-System Architecture
-PDF documents
-↓
-Document cleaning
-↓
 Chunking
-↓
-Embedding (MiniLM)
-↓
-Vector database (Chroma)
-↓
-Hybrid retrieval
-   • Dense search (embeddings)
-   • BM25 keyword search
-↓
-Context formatting
-↓
-Prompt engineering
-↓
-LLM generation (FLAN‑T5)
-↓
-Answer + cited sources
+After loading the PDFs, split each `Document` into smaller segments to provide the retriever with fine‑grained context. Using `RecursiveCharacterTextSplitter` with a `chunk_size` of 1000 characters and `chunk_overlap` of 200 characters ensures that adjacent chunks share context. The resulting list of chunks is used throughout the rest of the pipeline.
 
-Key Features
+Embeddings and Vector Store
+Embed each chunk using a sentence embedding model. The example notebook uses the `sentence-transformers/all-MiniLM-L6-v2` model for its balance of performance and speed. Compute embeddings in batches to save memory and time. Then instantiate a persistent Chroma client and add your embeddings, raw text and metadata to a collection. Using a persistent client means your vector store is saved across sessions without extra `.persist()` calls.
 
-Hybrid Retrieval
-The system combines two retrieval methods.
+Retrieval and Answer Generation
+Define a retrieval function that accepts a user’s question, embeds it with the same model and queries the Chroma collection. Return the top‑K documents and their metadata. For generation, assemble a prompt that includes the retrieved context with citation tags (e.g. `[1]`, `[2]`) and instruct the model to answer using only the provided context. The notebook uses `flan‑t5‑large`, loaded via Hugging Face Transformers, to generate concise answers with citations. Adjust `top_k` and `max_new_tokens` to suit your needs.
 
-Dense Retrieval
-Uses sentence embeddings to find semantic matches.
-Model used: sentence-transformers/all-MiniLM-L6-v2
-Vector database: ChromaDB
+Example Usage
+Below is a basic example showing how to pose a question to the system in Colab:
 
-Sparse Retrieval (BM25)
-BM25 retrieves documents using keyword matching, which helps capture:
-• rare medical terms
-• acronyms
-• specific symptom descriptions
+```python
+# Ask about motor symptoms
+response = answer_question(
+    'What are the motor symptoms of Parkinson's disease?',
+    top_k=8,
+    max_new_tokens=256
+)
+print(response)
+```
 
-Hybrid Ranking
-Results from both retrievers are combined and deduplicated to improve recall and precision.
+If your data contains the relevant information, the model will produce a bullet‑listed answer citing the documents that contain definitions of bradykinesia, resting tremor, rigidity and postural instability【283092665182710†L35-L60】. You can ask about non‑motor symptoms, atypical parkinsonism or imaging techniques as long as your documents include those topics.
 
-Context Filtering
-Medical PDFs often contain sections that are not useful for answering questions such as:
-• references
-• bibliographies
-• copyright pages
-• front matter
+Troubleshooting and Tips
+• Increase `top_k` if the model returns 'I don't know'; this allows the retriever to pull more context.
+• Verify that your PDF parser ingests the text you expect. If some PDF is poorly parsed, consider extracting key sections manually or converting them to plain text.
+• Use more descriptive queries; embedding models rely on semantic similarity, so including key terms (e.g. ‘bradykinesia’, ‘levodopa’) improves retrieval.
+• Experiment with chunk sizes; shorter chunks give finer granularity but may miss context, while larger chunks capture more information but reduce retrieval specificity.
 
-These sections can degrade retrieval quality. The system filters chunks that likely contain DOI lists, citation clusters, or reference sections to improve context precision.
+Dependencies
+- Python 3.10 or later
+- Google Colab notebook environment
+- Packages: `langchain-core`, `langchain-community`, `langchain-text-splitters`, `sentence-transformers`, `chromadb`, `gradio`, `transformers`, `pypdf`
+- ~10 GB of RAM to run `flan‑t5‑large` (use a smaller model if memory is limited)
 
-Prompt Engineering
-The system uses a structured prompt to encourage grounded answers.
 
-Prompt rules:
-• Use only the retrieved context
-• Do not invent facts
-• Provide evidence bullets
-• Cite sources as (Doc 1), (Doc 2)
-
-Example Output Format
-
-Evidence:
-• Early recurrent falls may indicate atypical parkinsonism (Doc 1)
-• Poor response to levodopa is a key diagnostic clue (Doc 2)
-
-Final Answer:
-Early falls and poor levodopa response are important red flags suggesting atypical parkinsonism.
-
-LLM Generation
-The system uses a lightweight local model:
-google/flan-t5-small
-
-Advantages:
-• runs locally in Colab
-• low RAM requirements
-• suitable for small RAG systems
-
-Repository Structure
-
-pd-rag-assistant/
-│
-├── data/
-│   ├── Recognizing Atypical Parkinsonisms.pdf
-│   ├── Parkinson’s Disease Pathogenesis and Clinical Aspects.pdf
-│   └── How to approach a patient with parkinsonism.pdf
-│
-├── notebooks/
-│   └── pd_rag_assistant.ipynb
-│
-├── chroma_db/
-│   └── persistent vector database
-│
-└── README.md
-
-Installation
-
-pip install langchain
-pip install langchain-community
-pip install langchain-text-splitters
-pip install chromadb
-pip install sentence-transformers
-pip install rank_bm25
-pip install transformers
-pip install pdfplumber
-
-Running the Project
-
-1. Place Parkinson’s disease PDFs in the data folder.
-2. Run the notebook cells in order.
-
-The pipeline will:
-• Load PDFs
-• Clean and filter text
-• Split documents into chunks
-• Generate embeddings
-• Store vectors in Chroma
-• Create hybrid retrievers
-• Generate answers
-
-Example Query
-
-What are red flags that suggest atypical parkinsonism rather than idiopathic Parkinson's disease?
-
-Example Output
-
-Evidence:
-• Absence of tremor can be a red flag for atypical parkinsonism (Doc 2)
-• Early recurrent falls may suggest progressive supranuclear palsy (Doc 1)
-• Poor response to levodopa is another distinguishing feature (Doc 2)
-
-Final Answer:
-Early falls, poor levodopa response, and atypical tremor presentation are common red flags suggesting atypical parkinsonism rather than idiopathic Parkinson’s disease.
-
-Evaluation Approach
-
-Context Precision:
-Are the retrieved passages actually relevant?
-
-Faithfulness:
-Is the answer supported by the retrieved context?
-
-Future Improvements
-
-• reranking retrieved passages
-• cross‑encoder relevance scoring
-• Graph RAG for structured medical relationships
-• stronger instruction‑tuned models
-• automated evaluation metrics
-
-Educational Goal
-
-This project demonstrates:
-• document ingestion
-• vector databases
-• hybrid retrieval
-• prompt engineering
-• grounded generation
-
-The goal is to build a trustworthy medical knowledge assistant that answers questions based on verifiable sources.
-
+Disclaimer
+This project is for educational and prototyping purposes only. It demonstrates how retrieval‑augmented generation can be applied to a corpus of Parkinson's disease literature to answer clinical questions. It is **not** intended to replace medical advice or professional guidelines. The answers generated by the model are limited by the quality and scope of the input data; always consult primary sources or healthcare professionals for clinical decision‑making.
